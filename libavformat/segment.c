@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011, Luca Barbato
+ * Copyright (c) 2016, Artyom V. Poptsov <poptsov.artyom@gmail.com>
  *
  * This file is part of FFmpeg.
  *
@@ -112,6 +113,7 @@ typedef struct SegmentContext {
     int  individual_header_trailer; /**< Set by a private option. */
     int  write_header_trailer; /**< Set by a private option. */
     char *header_filename;  ///< filename to write the output header to
+    char *headers;         ///< HTTP headers
 
     int reset_timestamps;  ///< reset timestamps at the begin of each segment
     int64_t initial_offset;    ///< initial timestamps offset, expressed in microseconds
@@ -247,7 +249,10 @@ static int segment_start(AVFormatContext *s, int write_header)
     if ((err = set_segment_filename(s)) < 0)
         return err;
 
-    if ((err = s->io_open(s, &oc->pb, oc->filename, AVIO_FLAG_WRITE, NULL)) < 0) {
+    AVDictionary *d = NULL;
+    av_dict_set(&d, "headers", seg->headers, 0);
+
+    if ((err = s->io_open(s, &oc->pb, oc->filename, AVIO_FLAG_WRITE, &d)) < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to open segment '%s'\n", oc->filename);
         return err;
     }
@@ -276,7 +281,9 @@ static int segment_list_open(AVFormatContext *s)
     int ret;
 
     snprintf(seg->temp_list_filename, sizeof(seg->temp_list_filename), seg->use_rename ? "%s.tmp" : "%s", seg->list);
-    ret = s->io_open(s, &seg->list_pb, seg->temp_list_filename, AVIO_FLAG_WRITE, NULL);
+    AVDictionary *d = NULL;
+    av_dict_set(&d, "headers", seg->headers, 0);
+    ret = s->io_open(s, &seg->list_pb, seg->temp_list_filename, AVIO_FLAG_WRITE, &d);
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to open segment list '%s'\n", seg->list);
         return ret;
@@ -738,10 +745,13 @@ static int seg_init(AVFormatContext *s)
         goto fail;
     oc = seg->avf;
 
+    AVDictionary *d = NULL;
+    av_dict_set(&d, "headers", seg->headers, 0);
+
     if (seg->write_header_trailer) {
         if ((ret = s->io_open(s, &oc->pb,
                               seg->header_filename ? seg->header_filename : oc->filename,
-                              AVIO_FLAG_WRITE, NULL)) < 0) {
+                              AVIO_FLAG_WRITE, &d)) < 0) {
             av_log(s, AV_LOG_ERROR, "Failed to open segment '%s'\n", oc->filename);
             goto fail;
         }
@@ -784,7 +794,7 @@ static int seg_init(AVFormatContext *s)
         } else {
             close_null_ctxp(&oc->pb);
         }
-        if ((ret = oc->io_open(oc, &oc->pb, oc->filename, AVIO_FLAG_WRITE, NULL)) < 0)
+        if ((ret = oc->io_open(oc, &oc->pb, oc->filename, AVIO_FLAG_WRITE, &d)) < 0)
             goto fail;
         if (!seg->individual_header_trailer)
             oc->pb->seekable = 0;
@@ -1000,6 +1010,7 @@ static const AVOption options[] = {
     { "reset_timestamps", "reset timestamps at the begin of each segment", OFFSET(reset_timestamps), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E },
     { "initial_offset", "set initial timestamp offset", OFFSET(initial_offset), AV_OPT_TYPE_DURATION, {.i64 = 0}, -INT64_MAX, INT64_MAX, E },
     { "write_empty_segments", "allow writing empty 'filler' segments", OFFSET(write_empty), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E },
+    { "headers", "set custom HTTP headers, can override built in default headers", OFFSET(headers), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, E },
     { NULL },
 };
 
